@@ -68,6 +68,14 @@ class MainActivity: AppCompatActivity() {
         }
     }
 
+    private fun getLocationWeatherDetails() {
+        if (Constants.isNetworkAvailable(this)) {
+            Toast.makeText(this@MainActivity, "You have connected to the internet...", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this@MainActivity, "No internet connection is available...", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // function which is used to verify that the location or GPS is enable or not of the user's device.
     private fun isLocationEnabled(): Boolean {
         // provides access to the system location services.
@@ -121,6 +129,7 @@ class MainActivity: AppCompatActivity() {
 
             val longitude = mLastLocation?.longitude
             Log.i("Current Longitude", "$longitude")
+            getLocationWeatherDetails()
         }
     }
 }
