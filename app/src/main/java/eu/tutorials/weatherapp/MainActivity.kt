@@ -2,6 +2,7 @@ package eu.tutorials.weatherapp
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Dialog
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -21,12 +22,23 @@ import com.karumi.dexter.MultiplePermissionsReport
 import com.karumi.dexter.PermissionToken
 import com.karumi.dexter.listener.PermissionRequest
 import com.karumi.dexter.listener.multi.MultiplePermissionsListener
+import eu.tutorials.weatherapp.models.WeatherResponse
+import eu.tutorials.weatherapp.network.WeatherService
+import eu.tutorials.weatherapp.Constants
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.create
 
 // openWeather Link : https://openweathermap.org/api
 class MainActivity: AppCompatActivity() {
 
     // fused location client variable which is further used to get the user's current location
     private lateinit var mFusedLocationClient: FusedLocationProviderClient
+
+    private var mProgressDialog: Dialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
 
@@ -68,9 +80,47 @@ class MainActivity: AppCompatActivity() {
         }
     }
 
-    private fun getLocationWeatherDetails() {
+    private fun getLocationWeatherDetails(latitude: Double, longitude: Double)  {
         if (Constants.isNetworkAvailable(this)) {
             Toast.makeText(this@MainActivity, "You have connected to the internet...", Toast.LENGTH_SHORT).show()
+            val retrofit: Retrofit = Retrofit.Builder().baseUrl(Constants.BASE_URL).addConverterFactory(GsonConverterFactory.create()).build()
+            val service: WeatherService = retrofit.create<WeatherService>(WeatherService::class.java)
+            val listCall: Call<WeatherResponse> = service.getWeather(latitude, longitude, Constants.METRIC_UNIT, Constants.APP_ID)
+            showCustomProgressDialog()
+            listCall.enqueue(object: Callback<WeatherResponse> {
+                override fun onResponse(
+                    call: Call<WeatherResponse>,
+                    response: Response<WeatherResponse>
+                ) {
+                    if (response!!.isSuccessful) {
+                        hideProgressDialog()
+                        val weatherList: WeatherResponse? = response.body()
+                        if (weatherList != null) {
+                            setUpUI(weatherList)
+                        }
+                        Log.i("Response Result", "$weatherList")
+                    } else {
+                        val rc = response.code()
+                        when (rc) {
+                            400 -> {
+                                Log.i("Error 400", "bad connection")
+                            }
+                            404 -> {
+                                Log.i("Error 404", "not found")
+                            }
+                            else -> {
+                                Log.i("Error", "generic error ")
+                            }
+                        }
+                    }
+                }
+
+                override fun onFailure(call: Call<WeatherResponse>, t: Throwable) {
+                    Log.i("ERROR", t!!.message.toString())
+                    hideProgressDialog()
+                }
+
+            })
         } else {
             Toast.makeText(this@MainActivity, "No internet connection is available...", Toast.LENGTH_SHORT).show()
         }
@@ -129,7 +179,28 @@ class MainActivity: AppCompatActivity() {
 
             val longitude = mLastLocation?.longitude
             Log.i("Current Longitude", "$longitude")
-            getLocationWeatherDetails()
+            if (latitude != null && longitude != null) {
+                getLocationWeatherDetails(latitude, longitude)
+            }
+        }
+    }
+
+    private fun showCustomProgressDialog() {
+        mProgressDialog = Dialog(this)
+        mProgressDialog!!.setContentView(R.layout.dialog_progress)
+        mProgressDialog!!.show()
+    }
+
+    private fun hideProgressDialog() {
+        if (mProgressDialog != null) {
+            mProgressDialog!!.dismiss()
+        }
+    }
+
+    private fun setUpUI(weatherList: WeatherResponse) {
+        for (i in weatherList.weather.indices) {
+            Log.i("Weather Name", weatherList.weather.toString())
+//            tv_main.text = weatherList.weather[i].main
         }
     }
 }
