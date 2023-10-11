@@ -6,14 +6,21 @@ import android.app.Dialog
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.location.Location
 import android.location.LocationManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
+import android.widget.ImageView
+import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.gms.location.*
@@ -31,14 +38,24 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.create
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 // openWeather Link : https://openweathermap.org/api
 class MainActivity: AppCompatActivity() {
 
     // fused location client variable which is further used to get the user's current location
     private lateinit var mFusedLocationClient: FusedLocationProviderClient
+    private lateinit var mSharedPreferences: SharedPreferences
 
     private var mProgressDialog: Dialog? = null
+
+    // A global variable for Current Latitude
+    private var mLatitude: Double = 0.0
+    // A global variable for Current Longitude
+    private var mLongitude: Double = 0.0
 
     override fun onCreate(savedInstanceState: Bundle?) {
 
@@ -46,6 +63,7 @@ class MainActivity: AppCompatActivity() {
         setContentView(R.layout.activity_main)
         // initialize the fused location variable
         mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        mSharedPreferences = getSharedPreferences(Constants.PREFERENCE_NAME, Context.MODE_PRIVATE)
 
         if (!isLocationEnabled()) {
             Toast.makeText(this, "Your location settings are turned off... Please turn them on...", Toast.LENGTH_SHORT).show()
@@ -80,26 +98,32 @@ class MainActivity: AppCompatActivity() {
         }
     }
 
-    private fun getLocationWeatherDetails(latitude: Double, longitude: Double)  {
+    private fun getLocationWeatherDetails()  {
         if (Constants.isNetworkAvailable(this)) {
             Toast.makeText(this@MainActivity, "You have connected to the internet...", Toast.LENGTH_SHORT).show()
             val retrofit: Retrofit = Retrofit.Builder().baseUrl(Constants.BASE_URL).addConverterFactory(GsonConverterFactory.create()).build()
             val service: WeatherService = retrofit.create<WeatherService>(WeatherService::class.java)
-            val listCall: Call<WeatherResponse> = service.getWeather(latitude, longitude, Constants.METRIC_UNIT, Constants.APP_ID)
+            val listCall: Call<WeatherResponse> = service.getWeather(mLatitude, mLongitude, Constants.METRIC_UNIT, Constants.APP_ID)
             showCustomProgressDialog()
             listCall.enqueue(object: Callback<WeatherResponse> {
+                @RequiresApi(Build.VERSION_CODES.N)
+                @SuppressLint("SetTextI18n")
                 override fun onResponse(
                     call: Call<WeatherResponse>,
                     response: Response<WeatherResponse>
                 ) {
-                    if (response!!.isSuccessful) {
+                    if (response.isSuccessful) {
+                        Toast.makeText(this@MainActivity, "response successful...", Toast.LENGTH_SHORT).show()
                         hideProgressDialog()
                         val weatherList: WeatherResponse? = response.body()
                         if (weatherList != null) {
                             setUpUI(weatherList)
+                            Log.i("Response Result", "$weatherList")
+                        } else {
+                            Log.e("Response Error", "Response body is null")
                         }
-                        Log.i("Response Result", "$weatherList")
                     } else {
+                        Toast.makeText(this@MainActivity, "response unsuccessful...", Toast.LENGTH_SHORT).show()
                         val rc = response.code()
                         when (rc) {
                             400 -> {
@@ -114,12 +138,11 @@ class MainActivity: AppCompatActivity() {
                         }
                     }
                 }
-
                 override fun onFailure(call: Call<WeatherResponse>, t: Throwable) {
-                    Log.i("ERROR", t!!.message.toString())
+                    // Toast.makeText(this@MainActivity, "response unsuccessful...", Toast.LENGTH_SHORT).show()
+                    Log.i("ERROR", t.message.toString())
                     hideProgressDialog()
                 }
-
             })
         } else {
             Toast.makeText(this@MainActivity, "No internet connection is available...", Toast.LENGTH_SHORT).show()
@@ -160,10 +183,10 @@ class MainActivity: AppCompatActivity() {
     // function to request the current location. Using the fused location provider client.
     @SuppressLint("MissingPermission")
     private fun requestLocationData() {
-
         val mLocationRequest = LocationRequest()
         mLocationRequest.priority = LocationRequest.PRIORITY_HIGH_ACCURACY
 
+        mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         mFusedLocationClient.requestLocationUpdates(
             mLocationRequest, mLocationCallback,
             Looper.myLooper()
@@ -174,13 +197,14 @@ class MainActivity: AppCompatActivity() {
     private val mLocationCallback = object : LocationCallback() {
         override fun onLocationResult(locationResult: LocationResult) {
             val mLastLocation: Location? = locationResult.lastLocation
-            val latitude = mLastLocation?.latitude
-            Log.i("Current Latitude", "$latitude")
-
-            val longitude = mLastLocation?.longitude
-            Log.i("Current Longitude", "$longitude")
-            if (latitude != null && longitude != null) {
-                getLocationWeatherDetails(latitude, longitude)
+            if (mLastLocation != null) {
+                mLatitude = mLastLocation.latitude
+                mLongitude = mLastLocation.longitude
+                Log.i("Current Latitude", "$mLatitude")
+                Log.i("Current Longitude", "$mLongitude")
+                getLocationWeatherDetails()
+            } else {
+                Log.e("LocationCallback", "No location data received")
             }
         }
     }
@@ -197,10 +221,87 @@ class MainActivity: AppCompatActivity() {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.N)
     private fun setUpUI(weatherList: WeatherResponse) {
         for (i in weatherList.weather.indices) {
             Log.i("Weather Name", weatherList.weather.toString())
-//            tv_main.text = weatherList.weather[i].main
+            // setting values to the screen based on data
+            val tvMain = findViewById<TextView>(R.id.tv_main)
+            tvMain.text = weatherList.weather[i].main
+            val tvMainDescription = findViewById<TextView>(R.id.tv_main_description)
+            tvMainDescription.text = weatherList.weather[i].description
+            val tvTemp = findViewById<TextView>(R.id.tv_temp)
+            tvTemp.text = weatherList.main.temp.toString() + getUnit(application.resources.configuration.locales.toString())
+            // set min./max., wind speed and country
+            val tvHumidity = findViewById<TextView>(R.id.tv_humidity)
+            tvHumidity.text = weatherList.main.humidity.toString() + " %"
+            val tvMin = findViewById<TextView>(R.id.tv_min)
+            tvMin.text = weatherList.main.temp_min.toString() + " min."
+            val tvMax = findViewById<TextView>(R.id.tv_max)
+            tvMax.text = weatherList.main.temp_max.toString() + " max."
+            val tvSpeed = findViewById<TextView>(R.id.tv_speed)
+            tvSpeed.text = weatherList.wind.speed.toString()
+            val tvName = findViewById<TextView>(R.id.tv_name)
+            tvName.text = weatherList.name
+            val tvCountry = findViewById<TextView>(R.id.tv_country)
+            tvCountry.text = weatherList.sys.country
+            // setting sunrise and sunset
+            val tvSunriseTime = findViewById<TextView>(R.id.tv_sunrise_time)
+            tvSunriseTime.text = unixTime(weatherList.sys.sunrise)
+            val tvSunsetTime = findViewById<TextView>(R.id.tv_sunset_time)
+            tvSunsetTime.text = unixTime(weatherList.sys.sunset)
+
+            val ivMain = findViewById<ImageView>(R.id.iv_main)
+            when (weatherList.weather[i].icon) {
+                "01d" -> ivMain.setImageResource(R.drawable.sunny)
+                "02d" -> ivMain.setImageResource(R.drawable.cloud)
+                "03d" -> ivMain.setImageResource(R.drawable.cloud)
+                "04d" -> ivMain.setImageResource(R.drawable.cloud)
+                "04n" -> ivMain.setImageResource(R.drawable.cloud)
+                "10d" -> ivMain.setImageResource(R.drawable.rain)
+                "11d" -> ivMain.setImageResource(R.drawable.storm)
+                "13d" -> ivMain.setImageResource(R.drawable.snowflake)
+                "01n" -> ivMain.setImageResource(R.drawable.cloud)
+                "02n" -> ivMain.setImageResource(R.drawable.cloud)
+                "03n" -> ivMain.setImageResource(R.drawable.cloud)
+                "10n" -> ivMain.setImageResource(R.drawable.cloud)
+                "11n" -> ivMain.setImageResource(R.drawable.rain)
+                "13n" -> ivMain.setImageResource(R.drawable.snowflake)
+            }
         }
     }
+
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when(item.itemId) {
+            R.id.action_refresh -> {
+                getLocationWeatherDetails()
+                true
+            } else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun getUnit(value: String): String? {
+        var v = "°C"
+        if ("US" == value || "LR" == value || "MM" == value) {
+            v = "°F"
+        }
+        return v
+    }
+
+    private fun unixTime(time: Long): String? {
+        val date = Date(time * 1000L)
+        val sdf = SimpleDateFormat("hh:mm", Locale.US)
+        sdf.timeZone = TimeZone.getDefault()
+        return sdf.format(date)
+    }
+
+
+
+
+
 }
